@@ -1,0 +1,25 @@
+# Jing's Video Matting Studio - Render.com 部署配置
+# 部署步骤见 云端部署说明.md
+
+services:
+  - type: web
+    runtime: docker
+    name: matting-backend
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: CORS_ORIGINS
+        sync: false
+        # 部署后填入前端地址，例如: https://matting-frontend.onrender.com
+
+  - type: web
+    runtime: docker
+    name: matting-frontend
+    rootDir: frontend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
+        # 部署后填入后端地址，例如: https://matting-backend.onrender.com/api
