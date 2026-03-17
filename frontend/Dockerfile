@@ -9,6 +9,7 @@ RUN npm run build
 
 FROM nginx:alpine
 COPY --from=builder /app/out /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf.template /etc/nginx/conf.d/default.conf.template
+# Railway 注入 PORT，需在启动时替换；默认 8080
 EXPOSE 8080
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["/bin/sh", "-c", "sed \"s/__PORT__/${PORT:-8080}/g\" /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]

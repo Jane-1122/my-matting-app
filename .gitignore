@@ -8,4 +8,4 @@ backend/data/
 *.pyc
 .env
 .env.local
-backend/models/
+backend/models/*.onnx

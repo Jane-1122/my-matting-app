@@ -1,0 +1,16 @@
+server {
+    listen __PORT__;
+    server_name _;
+
+    client_max_body_size 500M;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # API requests go directly to backend URL (NEXT_PUBLIC_API_URL) from browser.
+    # No proxy needed when frontend and backend are separate services (e.g. Railway).
+
+    location / {
+        try_files $uri $uri.html $uri/ /index.html;
+    }
+}

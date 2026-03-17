@@ -5,6 +5,64 @@ import axios from "axios";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "/api";
 
+/** 在浏览器内从视频提取单帧为 JPEG，避免上传整段视频，大幅提升预览速度 */
+async function extractFrameFromVideo(videoFile: File): Promise<{ blob: Blob; frameIndex: number; totalFrames: number }> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    const url = URL.createObjectURL(videoFile);
+    video.src = url;
+
+    video.onloadedmetadata = () => {
+      const duration = video.duration || 1;
+      const fps = 30;
+      const totalFrames = Math.max(1, Math.floor(duration * fps));
+      const frameIndex = Math.floor(totalFrames / 2);
+      const time = Math.max(0.001, Math.min(duration - 0.001, (frameIndex / totalFrames) * duration));
+      video.currentTime = time;
+    };
+
+    video.onseeked = () => {
+      const maxDim = 720;
+      let w = video.videoWidth;
+      let h = video.videoHeight;
+      if (w > maxDim || h > maxDim) {
+        const s = maxDim / Math.max(w, h);
+        w = Math.round(w * s);
+        h = Math.round(h * s);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        reject(new Error("Canvas 不可用"));
+        return;
+      }
+      ctx.drawImage(video, 0, 0, w, h);
+      const totalFrames = Math.max(1, Math.floor((video.duration || 1) * 30));
+      const frameIndex = Math.floor(totalFrames / 2);
+      canvas.toBlob(
+        (blob) => {
+          URL.revokeObjectURL(url);
+          if (blob) resolve({ blob, frameIndex, totalFrames });
+          else reject(new Error("无法生成预览帧"));
+        },
+        "image/jpeg",
+        0.82
+      );
+    };
+
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(video.error);
+    };
+  });
+}
+
 type Stage = "idle" | "previewing" | "previewed" | "processing" | "finished" | "error";
 type Model = "person_fast" | "person_quality" | "general_object" | "general_object_hq";
 
@@ -42,6 +100,11 @@ export default function Home() {
     if (dlUrl) URL.revokeObjectURL(dlUrl);
   }, [dlUrl, videoUrl]);
 
+  useEffect(() => {
+    const base = API.startsWith("http") ? API.replace(/\/api\/?$/, "") : (typeof window !== "undefined" ? window.location.origin : "");
+    if (base) axios.get(`${base}/warmup`).catch(() => {});
+  }, []);
+
   const pick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -56,12 +119,30 @@ export default function Home() {
     if (!file) return;
     setStage("previewing"); setErr(null); setOrigImg(null); setPrevImg(null);
     try {
-      const fd = new FormData();
-      fd.append("file", file); fd.append("model_kind", model);
-      const r = await axios.post(`${API}/preview`, fd);
-      setOrigImg(r.data.original); setPrevImg(r.data.preview);
-      setFrameInfo(`第 ${r.data.frame_index + 1} / ${r.data.total_frames} 帧`);
-      setStage("previewed"); setShowOrig(false);
+      let frameIndex = 0;
+      let totalFrames = 1;
+      let r: { data: { original: string; preview: string; frame_index?: number; total_frames?: number } };
+      try {
+        const extracted = await extractFrameFromVideo(file);
+        const fd = new FormData();
+        fd.append("file", extracted.blob, "frame.jpg");
+        fd.append("model_kind", model);
+        r = await axios.post(`${API}/preview-frame`, fd, { timeout: 120000 });
+        frameIndex = extracted.frameIndex;
+        totalFrames = extracted.totalFrames;
+      } catch (_) {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("model_kind", model);
+        r = await axios.post(`${API}/preview`, fd, { timeout: 120000 });
+        frameIndex = r.data.frame_index ?? 0;
+        totalFrames = r.data.total_frames ?? 1;
+      }
+      setOrigImg(r.data.original);
+      setPrevImg(r.data.preview);
+      setFrameInfo(`第 ${frameIndex + 1} / ${totalFrames} 帧`);
+      setStage("previewed");
+      setShowOrig(false);
     } catch (e: any) {
       setStage("error");
       setErr(e?.response?.data?.detail ?? e?.message ?? "预览失败");
@@ -76,6 +157,7 @@ export default function Home() {
       fd.append("file", file); fd.append("model_kind", model);
       const r = await axios.post(`${API}/upload`, fd, {
         responseType: "blob",
+        timeout: 600000,
         onUploadProgress: (e) => {
           if (!e.total) return;
           setPct(Math.round((e.loaded / e.total) * 100));
@@ -185,7 +267,7 @@ export default function Home() {
           {(stage === "previewing" || stage === "processing") && (
             <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
               <div className="flex items-center justify-between text-xs text-gray-500">
-                <span>{stage === "previewing" ? "正在生成预览" : "Processing..."}</span>
+                <span>{stage === "previewing" ? "正在生成预览，首次约 10–30 秒…" : "Processing..."}</span>
                 <span>{stage === "processing" && pct >= 100 ? "—" : `${pct}%`}</span>
               </div>
               <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-gray-100">
