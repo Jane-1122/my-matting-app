@@ -27,7 +27,7 @@ app = FastAPI(title="Jing's Video Matting Studio", version="0.9.0")
 
 
 def _preload_models() -> None:
-    """后台预加载常用模型，避免首次预览等待 1–2 分钟。"""
+    """后台预加载常用模型。可通过 DISABLE_PRELOAD=1 禁用，避免免费档内存不足导致启动失败。"""
     try:
         logger.info("预加载 person_fast (mobilenetv3) …")
         get_rvm_model("mobilenetv3")
@@ -41,12 +41,14 @@ def _preload_models() -> None:
             logger.info("U2-Net 预加载完成")
     except Exception as e:
         logger.warning("预加载 U2-Net 失败: %s", e)
-    # IS-Net 不预加载，避免免费档内存不足 OOM；首次 general_object_hq 请求时按需加载
 
 
 @app.on_event("startup")
 def startup_preload():
-    """后台预加载 person_fast，服务可立即响应，模型加载完成后首次预览即快。"""
+    """可选预加载。DISABLE_PRELOAD=1 时跳过，确保服务快速启动（首次请求会较慢）。"""
+    if os.environ.get("DISABLE_PRELOAD", "").strip() == "1":
+        logger.info("DISABLE_PRELOAD=1，跳过模型预加载")
+        return
     threading.Thread(target=_preload_models, daemon=True).start()
 _cors_raw = os.environ.get("CORS_ORIGINS", "*")
 _cors_origins = ["*"] if _cors_raw.strip() == "*" else [
