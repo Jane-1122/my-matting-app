@@ -14,9 +14,7 @@ RUN pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cpu
 
 COPY app/ app/
-COPY models/ models/
-
-RUN mkdir -p data/uploads data/results data/temp
+RUN mkdir -p models data/uploads data/results data/temp
 
 EXPOSE 8000
 
