@@ -41,6 +41,7 @@ def _preload_models() -> None:
             logger.info("U2-Net 预加载完成")
     except Exception as e:
         logger.warning("预加载 U2-Net 失败: %s", e)
+    # IS-Net 不预加载，避免免费档内存不足 OOM；首次 general_object_hq 请求时按需加载
 
 
 @app.on_event("startup")
@@ -390,6 +391,10 @@ def warmup():
     """页面加载时调用，提前加载模型，减少首次预览等待。"""
     if "mobilenetv3" not in _rvm_models:
         threading.Thread(target=lambda: get_rvm_model("mobilenetv3"), daemon=True).start()
+    if _u2net_session is None and U2NET_PATH.exists():
+        threading.Thread(target=get_u2net, daemon=True).start()
+    if _isnet_session is None and ISNET_PATH.exists():
+        threading.Thread(target=get_isnet, daemon=True).start()
     return {"status": "ok", "person_fast_ready": "mobilenetv3" in _rvm_models}
 
 
@@ -417,7 +422,13 @@ async def preview_frame_endpoint(file: UploadFile = File(...), model_kind: Model
         raise HTTPException(400, "无法解析图片，请确保为 JPEG/PNG")
     rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
 
-    rgb_out, rgba = await asyncio.to_thread(_do_preview_frame, rgb, model_kind, 480)
+    max_side = 360 if model_kind == "general_object_hq" else 480
+    try:
+        rgb_out, rgba = await asyncio.to_thread(_do_preview_frame, rgb, model_kind, max_side)
+    except RuntimeError as e:
+        if "没有可用的通用抠像模型" in str(e):
+            raise HTTPException(503, "通用抠像模型未就绪，请稍候重试")
+        raise
 
     return JSONResponse({
         "original": f"data:image/jpeg;base64,{img_to_b64(rgb_out)}",
@@ -459,7 +470,13 @@ async def preview_endpoint(file: UploadFile = File(...), model_kind: ModelKind =
     except OSError:
         pass
 
-    rgb_out, rgba = await asyncio.to_thread(_do_preview_frame, rgb, model_kind, 480)
+    max_side = 360 if model_kind == "general_object_hq" else 480
+    try:
+        rgb_out, rgba = await asyncio.to_thread(_do_preview_frame, rgb, model_kind, max_side)
+    except RuntimeError as e:
+        if "没有可用的通用抠像模型" in str(e):
+            raise HTTPException(503, "通用抠像模型未就绪，请稍候重试")
+        raise
 
     return JSONResponse({
         "original": f"data:image/jpeg;base64,{img_to_b64(rgb_out)}",

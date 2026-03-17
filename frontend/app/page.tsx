@@ -100,9 +100,17 @@ export default function Home() {
     if (dlUrl) URL.revokeObjectURL(dlUrl);
   }, [dlUrl, videoUrl]);
 
+  const [backendOk, setBackendOk] = useState<boolean | null>(null);
   useEffect(() => {
     const base = API.startsWith("http") ? API.replace(/\/api\/?$/, "") : (typeof window !== "undefined" ? window.location.origin : "");
-    if (base) axios.get(`${base}/warmup`).catch(() => {});
+    if (base) {
+      axios.get(`${base}/health`, { timeout: 10000 })
+        .then(() => setBackendOk(true))
+        .catch(() => setBackendOk(false));
+      axios.get(`${base}/warmup`).catch(() => {});
+    } else {
+      setBackendOk(true);
+    }
   }, []);
 
   const pick = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -127,17 +135,18 @@ export default function Home() {
         const fd = new FormData();
         fd.append("file", extracted.blob, "frame.jpg");
         fd.append("model_kind", model);
-        r = await axios.post(`${API}/preview-frame`, fd, { timeout: 120000 });
+        r = await axios.post(`${API}/preview-frame`, fd, { timeout: 180000 });
         frameIndex = extracted.frameIndex;
         totalFrames = extracted.totalFrames;
       } catch (_) {
         const fd = new FormData();
         fd.append("file", file);
         fd.append("model_kind", model);
-        r = await axios.post(`${API}/preview`, fd, { timeout: 120000 });
+        r = await axios.post(`${API}/preview`, fd, { timeout: 180000 });
         frameIndex = r.data.frame_index ?? 0;
         totalFrames = r.data.total_frames ?? 1;
       }
+      setBackendOk(true);
       setOrigImg(r.data.original);
       setPrevImg(r.data.preview);
       setFrameInfo(`第 ${frameIndex + 1} / ${totalFrames} 帧`);
@@ -145,7 +154,15 @@ export default function Home() {
       setShowOrig(false);
     } catch (e: any) {
       setStage("error");
-      setErr(e?.response?.data?.detail ?? e?.message ?? "预览失败");
+      const isTimeout = e?.code === "ECONNABORTED" || e?.message?.includes("timeout");
+      const isGeneral = model.startsWith("general_object");
+      const isNetworkErr = !e?.response && (e?.message === "Network Error" || e?.code === "ERR_NETWORK");
+      const hint = isNetworkErr
+        ? "无法连接后端。请检查网络、后端是否已部署，或稍后重试（冷启动约 30–60 秒）"
+        : isTimeout && isGeneral
+          ? "请求超时。通用物品抠像（高质量）处理较慢，请重试或改用「通用物品抠像（快速）」"
+          : (e?.response?.data?.detail ?? e?.message ?? "预览失败");
+      setErr(hint);
     }
   };
 
@@ -190,6 +207,12 @@ export default function Home() {
           上传视频，选择模型，先预览单帧效果，满意后处理全部帧并下载透明 PNG 序列帧 ZIP。
         </p>
       </div>
+
+      {backendOk === false && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          无法连接后端服务。若后端刚部署，请等待 30–60 秒冷启动后刷新页面；或检查 NEXT_PUBLIC_API_URL 是否指向正确的后端地址。
+        </div>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-[1fr_1.3fr]">
         {/* ===== 左栏 ===== */}
